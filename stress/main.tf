@@ -21,9 +21,6 @@ data "ibm_compute_ssh_key" "ssh_key" {
 # is the default on IBM Cloud. /etc/hosts is refreshed at each reboot from
 # /etc/cloud/templates/hosts.redhat.tmpl. 
 
-# Install Apache web server, copy index.html to avoid 403 http code
-# Record final msg in /var/log/cloud-init.log
-
 # package_upgrade not set to true. Avoids long execution time in demo mode. 
 # base64_encode and gzip set to false as not supported by IBM Cloud
 
@@ -34,12 +31,14 @@ data "template_cloudinit_config" "app_userdata" {
   part {
     content = <<EOF
 #cloud-config
-manage_etc_hosts: true
-package_upgrade: false
 packages:
-- stress
-- htop
-- mc
+  - stress
+  - htop
+  - mc
+# Update command prompt for selected users
+runcmd:
+  - sed -i 's/#force_color_prompt=yes/force_color_prompt=yes/g' /root/.bashrc
+# Send final message that all steps are complete
 final_message: "The system is finally up, after $UPTIME seconds"
 EOF
 
@@ -48,38 +47,63 @@ EOF
 
 
 ########################################################
-# Create VMs for app tier 
+# Create Auto Scale Group and Policies 
 ########################################################
 
-resource "ibm_compute_vm_instance" "app1" {
-  count             = var.vm_count_app
-  os_reference_code = var.osrefcode
-
-  # incrementally created hostnames
-  hostname   = format("stress-%02d", count.index + 1)
-  domain     = var.dns_domain
-  datacenter = var.datacenter1
-
-  hourly_billing = true                     //  Hourly billing rather than monthly
-  transient      = true                     //  Transient VM (requires use of Flavor)
-
-  #    flavor_key_name       = "C1_1X1X25"  //  Use Flavor key for Transient.  Use Cores + Memory + Disks for Standard
-  #    cores                 = 1            //  Number of cores
-  #    memory                = 1024         //  Amount of RAM (MB)
-  #    disks                 = [25]         //  Disk size(s)
-
-  flavor_key_name = "C1_1X1X25"             //  Using smallest flavor for testing
-
-  local_disk = false                        //  Use SAN rather than local disk
-
-  network_speed        = 100                //  100 Mbps LAN
-  private_network_only = false              //  Both public and private network interfaces
-
-  ssh_key_ids = [data.ibm_compute_ssh_key.ssh_key.id]                     //  ID of the existing ssh key we are using
-
-  user_metadata = data.template_cloudinit_config.app_userdata.rendered    //  Cloudinit data
-
-  tags = ["group:stresstest", "owner:shallcrm"]
+resource "ibm_compute_autoscale_group" "stress_scale_group" {
+  name                       = "shallcrm_stress"
+  regional_group             = var.regional_group_name
+  minimum_member_count       = 1
+  maximum_member_count       = 5
+  cooldown                   = 30
+  termination_policy         = "CLOSEST_TO_NEXT_CHARGE"
+  virtual_guest_member_template {
+    hostname                 = "stress"
+    domain                   = var.dns_domain
+    os_reference_code        = var.osrefcode
+    datacenter               = var.datacenter1
+    hourly_billing           = true                     //  Hourly billing rather than monthly
+    cores                    = 1                        //  Number of cores
+    memory                   = 1024                     //  Amount of RAM (MB)
+    disks                    = [25]                     //  Disk size(s) (GB)
+    local_disk               = false                    //  Use SAN rather than local disk
+    network_speed            = 100                      //  100 Mbps LAN
+    private_network_only     = false                    //  Both public and private network interfaces
+    ssh_key_ids              = [data.ibm_compute_ssh_key.ssh_key.id]                   //  ID of the existing ssh key we are using
+    user_metadata            = data.template_cloudinit_config.app_userdata.rendered    //  Cloud-init data
+  }
 }
 
+resource "ibm_compute_autoscale_policy" "stress_scale_policy_1" {
+  name                       = "stress_scale_up"
+  scale_type                 = "RELATIVE"
+  scale_amount               = 1
+  cooldown                   = 30
+  scale_group_id             = ibm_compute_autoscale_group.stress_scale_group.id
+  triggers {
+    type = "RESOURCE_USE"
+      watches {
+        metric = "host.cpu.percent"
+        operator = ">"
+        value = "80"
+        period = 120
+      }
+  }
+}
 
+resource "ibm_compute_autoscale_policy" "stress_scale_policy_2" {
+  name                       = "stress_scale_down"
+  scale_type                 = "RELATIVE"
+  scale_amount               = -1
+  cooldown                   = 30
+  scale_group_id             = ibm_compute_autoscale_group.stress_scale_group.id
+  triggers {
+    type = "RESOURCE_USE"
+      watches {
+        metric = "host.cpu.percent"
+        operator = "<"
+        value = "20"
+        period = 120
+      }
+  }
+}

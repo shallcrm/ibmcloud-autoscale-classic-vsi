@@ -39,9 +39,18 @@ variable "osrefcode" {
 
 variable "vm_count_app" {
   description = "Number of VMs to be provisioned for stress test app hosts"
-  default     = "2"
+  default     = "1"
 }
 
 variable "datacenter1" {
-  default = "tok05"
+  description = "Data center in which to provision resources"
+  default     = "tok05"
+}
+
+# To get data center ID use: "ibmcloud sl call-api SoftLayer_Location_Datacenter getDatacenters"
+# To get corresponding regional group name use: "ibmcloud sl call-api SoftLayer_Location_Datacenter getGroups --init DC_ID"
+
+variable "regional_group_name" {
+  description = "SoftLayer regioanl group name corresponding to data center"
+  default     = "as-jpn-central-3"
 }
