@@ -94,7 +94,7 @@ resource "ibm_compute_autoscale_policy" "stress_scale_policy_1" {
 resource "ibm_compute_autoscale_policy" "stress_scale_policy_2" {
   name                       = "stress_scale_down"
   scale_type                 = "RELATIVE"
-  scale_amount               = -1          # Note:  Issue in current provider - will not accept negative values.  Use +1 then change via portal.
+  scale_amount               = -1          
   cooldown                   = 30
   scale_group_id             = ibm_compute_autoscale_group.stress_scale_group.id
   triggers {
